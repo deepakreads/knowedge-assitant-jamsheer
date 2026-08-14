@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      # host.docker.internal lets the container reach Ollama running on
+      # your host machine. On Linux you may need --add-host instead
+      # (already configured below via extra_hosts).
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - VISION_MODEL=qwen2.5vl:latest
+      - SOP_MODEL=qwen2.5:7b
+      - EMBEDDING_MODEL=nomic-embed-text
+      - WHISPER_MODEL=base
+      - FRONTEND_ORIGIN=http://localhost:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/data:/app/data
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend

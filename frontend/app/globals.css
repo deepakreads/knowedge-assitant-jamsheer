@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /*
+   * These are system-safe stacks so the app never depends on fetching
+   * fonts over the network at build or run time. If you want the exact
+   * Space Grotesk / Inter / IBM Plex Mono look from the design plan,
+   * either self-host those font files under /public/fonts and declare
+   * them with @font-face here, or re-introduce next/font/google in
+   * app/layout.tsx once you have reliable network access at build time.
+   */
+  --font-display: ui-sans-serif, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-body: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  background-color: #0e0f11;
+  color: #eceef0;
+}
+
+body {
+  font-family: var(--font-body);
+}
+
+.stamp {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.progress-track {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.08) 0px,
+    rgba(255, 255, 255, 0.08) 1px,
+    transparent 1px,
+    transparent 8px
+  );
+}
+
+::selection {
+  background: #e08e2b;
+  color: #0e0f11;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #3a3f46;
+  border-radius: 3px;
+}

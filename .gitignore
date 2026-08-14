@@ -1,0 +1,79 @@
+# ==========================================
+# Dependencies & Environments
+# ==========================================
+backend/.venv/
+frontend/node_modules/
+
+# Generic dependency fallbacks
+.venv/
+venv/
+node_modules/
+
+# ==========================================
+# Environment Variables & Secrets
+# ==========================================
+.env
+*.env
+.env.local
+.env.*.local
+
+# ==========================================
+# Project Specific Storage & Temporary Files
+# ==========================================
+uploads/*
+!uploads/.gitkeep
+
+data/jobs/*
+!data/jobs/.gitkeep
+
+data/sops/*
+!data/sops/.gitkeep
+
+# Camera / Webcam temporary snapshot frames
+tmp/
+*.tmp
+*.tmp.json
+tmp_webcam_frame.jpg
+violation_frame.jpg
+/tmp_*.jpg
+
+# Extracted PDF outputs / Video artifacts
+*.pdf
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# ==========================================
+# Python & Build Cache
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.python-version
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Frontend Build Outputs
+frontend/dist/
+frontend/build/
+
+# ==========================================
+# Logs, IDEs & OS Files
+# ==========================================
+*.log
+logs/
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+# Next.js build output
+frontend/.next/
+.next/
