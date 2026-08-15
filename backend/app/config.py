@@ -26,7 +26,7 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 
 # AICredits Configuration
 AICREDITS_BASE_URL = os.getenv("AICREDITS_BASE_URL", "https://api.aicredits.in/v1")
-AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
 # AI Model Selection (Cheapest options selected)
 VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-4b-it")          # ~$0.05 / 1M Input

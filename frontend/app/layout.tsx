@@ -2,12 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 
-// Fonts are declared as system-safe stacks in globals.css (--font-display,
-// --font-body, --font-mono) rather than via next/font/google, so the build
-// never depends on reaching Google Fonts over the network. Swap in
-// next/font/google (or self-hosted font files) here if you want the exact
-// Space Grotesk / Inter / IBM Plex Mono look shown in the design.
-
 export const metadata: Metadata = {
   title: "Video-to-SOP Knowledge Assistant",
   description: "Turn manufacturing training videos into reviewable Standard Operating Procedures.",
