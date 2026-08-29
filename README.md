@@ -57,23 +57,54 @@ Knowledge-Assistant/
 
 ## 2. Installation commands
 
-### Backend (Python 3.12.7)
+### Backend Setup
+
+> **⚠️ Windows Users (No Admin Rights):** Due to Windows path length limitations (260 character limit), the virtual environment is created at a shorter path: `C:\dev\jamsheer-venv` instead of inside the project directory. This prevents `ModuleNotFoundError` when installing packages like PyTorch.
+
+#### Option A: Windows Users (Recommended - Uses Shorter Path)
+
+```powershell
+# Navigate to the backend directory
+cd backend
+
+# Create virtual environment at shorter path (already done)
+# If needed to recreate:
+python -m venv C:\dev\jamsheer-venv
+
+# Activate virtual environment
+& "C:\dev\jamsheer-venv\Scripts\Activate.ps1"
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy environment config
+copy .env.example .env
+```
+
+#### Option B: macOS/Linux or Windows (In-project venv)
 
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate.bat
 pip install -r requirements.txt
 cp .env.example .env             # adjust if your Ollama host/models differ
 ```
 
-`openai-whisper` also needs `ffmpeg` on your PATH:
+### System Dependencies
+
+`openai-whisper` requires system tools. Install based on your OS:
 
 ```bash
 # macOS
 brew install ffmpeg tesseract
+
 # Ubuntu/Debian
 sudo apt-get install ffmpeg tesseract-ocr
+
+# Windows (using Chocolatey or direct install)
+# - FFmpeg: https://ffmpeg.org/download.html
+# - Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
 ```
 
 ### Frontend (Node 18+)
@@ -103,8 +134,38 @@ curl http://localhost:11434/api/tags
 
 ## 4. Backend start command
 
+### Windows Users (with Virtual Environment at C:\dev\jamsheer-venv)
+
+**PowerShell:**
+```powershell
+# Activate the virtual environment first (REQUIRED!)
+& "C:\dev\jamsheer-venv\Scripts\Activate.ps1"
+
+# Navigate to backend
+cd backend
+
+# Run the app (choose one):
+python main.py                  # Direct execution
+# OR
+uvicorn main:app --reload --host 0.0.0.0 --port 8000  # With auto-reload
+```
+
+**Quick Start Script (if available):**
+```powershell
+cd backend
+.\run.ps1              # Uses default port 8000
+.\run.ps1 -port 3000   # Custom port
+```
+
+### macOS/Linux
+
 ```bash
 cd backend
+
+# Activate virtual environment (if created with .venv)
+source .venv/bin/activate
+
+# Run the app
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -176,4 +237,144 @@ fallback on invalid model JSON), and SOP generation (including fallback).
   `sop_steps` once `status: "completed"`.
 - Everything is file-based under `backend/data/` — safe to delete that
   folder to reset all state.
+
+## 9. Elasticsearch Setup (Optional)
+
+Elasticsearch is used for indexing and searching SOP documents. It's **optional** — the app works perfectly without it.
+
+### For Local Development (No Security)
+
+If using **standalone Elasticsearch** (not Docker), disable security for development:
+
+**Edit:** `C:\elasticsearch-9.5.0\config\elasticsearch.yml`
+
+Add or update these settings:
+
+```yaml
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl:
+  enabled: false
+xpack.security.transport.ssl:
+  enabled: false
+```
+
+Then restart Elasticsearch:
+
+```powershell
+cd C:\elasticsearch-9.5.0\bin
+.\elasticsearch.bat
+```
+
+### Configuration in .env
+
+```bash
+# For local Elasticsearch (no credentials needed)
+ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_API_KEY=              # Leave empty for local dev
+ELASTICSEARCH_SOP_INDEX=sops
+
+# Or for Elasticsearch Cloud (requires API key)
+ELASTICSEARCH_URL=https://your-cluster.es.us-central1.gcp.cloud.es.io:9243
+ELASTICSEARCH_API_KEY=your_encoded_api_key
+```
+
+### If Elasticsearch is Not Available
+
+The app automatically falls back to local storage:
+- SOPs still generate and save locally
+- No search indexing (but app works fine)
+- Warning logged, non-critical
+
+Leave `ELASTICSEARCH_URL` blank to skip Elasticsearch entirely:
+
+```bash
+ELASTICSEARCH_URL=        # App works without it
+```
+
+For detailed Elasticsearch setup, see:
+- **[ELASTICSEARCH_STANDALONE_QUICK_START.md](ELASTICSEARCH_STANDALONE_QUICK_START.md)** - Quick setup guide
+- **[ELASTICSEARCH_STANDALONE_SETUP.md](ELASTICSEARCH_STANDALONE_SETUP.md)** - Detailed setup
+- **[ELASTICSEARCH_CONNECTION_FIXED.md](ELASTICSEARCH_CONNECTION_FIXED.md)** - Troubleshooting
+
+## 10. Troubleshooting
+
+### ModuleNotFoundError when running the app
+
+**Problem:** `ModuleNotFoundError: No module named 'fastapi'` or similar
+
+**Solution:** You must activate the virtual environment first:
+
+```powershell
+# Windows
+& "C:\dev\jamsheer-venv\Scripts\Activate.ps1"
+
+# macOS/Linux
+source .venv/bin/activate
+```
+
+Verify it's activated by checking your prompt shows `(jamsheer-venv)` prefix.
+
+### Windows path length error during installation
+
+**Problem:** `[WinError 206] The filename or extension is too long`
+
+**Root Cause:** Windows has a 260-character path limit. Deep project directories exceed this when installing large packages like PyTorch.
+
+**Solution:** The virtual environment is created at `C:\dev\jamsheer-venv` (shorter path) instead of inside the project. This is intentional and required for Windows support without admin rights.
+
+### Package import errors after activation
+
+**Solution:** Verify you're using the correct Python:
+
+```powershell
+python -c "import sys; print(sys.prefix)"
+# Should output: C:\dev\jamsheer-venv
+```
+
+If it shows a different path, the venv is not activated. Run activation command again.
+
+### Port already in use
+
+**Problem:** `Address already in use` when starting the backend
+
+**Solution:** Use a different port:
+
+```powershell
+uvicorn main:app --reload --host 0.0.0.0 --port 8001
+```
+
+Or kill the process using port 8000:
+
+```powershell
+# Windows
+netstat -ano | findstr :8000
+taskkill /PID <PID> /F
+
+# macOS/Linux
+lsof -i :8000
+kill -9 <PID>
+```
+
+## 11. Key Files & Documentation
+
+The backend directory includes these helpful guides:
+
+### Setup & Build
+- **[FIX_SUMMARY.md](backend/FIX_SUMMARY.md)** - Complete fix summary and setup details
+- **[QUICK_START.md](backend/QUICK_START.md)** - Quick reference for running the app
+- **[VENV_SETUP.md](backend/VENV_SETUP.md)** - Detailed virtual environment guide
+- **[BUILD_COMPLETE.md](backend/BUILD_COMPLETE.md)** - Full build information
+- **[run.ps1](backend/run.ps1)** - Automated startup script for Windows
+
+### Elasticsearch Setup
+- **[ELASTICSEARCH_STANDALONE_QUICK_START.md](ELASTICSEARCH_STANDALONE_QUICK_START.md)** - Quick 3-option setup guide
+- **[ELASTICSEARCH_STANDALONE_SETUP.md](ELASTICSEARCH_STANDALONE_SETUP.md)** - Detailed Elasticsearch setup
+- **[ELASTICSEARCH_CONNECTION_FIXED.md](ELASTICSEARCH_CONNECTION_FIXED.md)** - Connection troubleshooting
+- **[NO_DOCKER_ELASTICSEARCH_SOLUTION.md](NO_DOCKER_ELASTICSEARCH_SOLUTION.md)** - Setup without Docker
+
+### OCR & Special Features
+- **[OCR_MIGRATION.md](backend/OCR_MIGRATION.md)** - Tesseract → EasyOCR migration
+- **[TESSERACT_REPLACEMENT.md](backend/TESSERACT_REPLACEMENT.md)** - EasyOCR setup guide
+- **[FIX_ELASTICSEARCH_CONNECTION.md](FIX_ELASTICSEARCH_CONNECTION.md)** - ES connection error fixes
 

@@ -28,6 +28,7 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 AICREDITS_BASE_URL = os.getenv("AICREDITS_BASE_URL", "https://api.aicredits.in/v1")
 AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 
+
 # AI Model Selection (Cheapest options selected)
 VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-4b-it")          # ~$0.05 / 1M Input
 SOP_MODEL = os.getenv("SOP_MODEL", "inclusionai/ling-2.6-flash")          # ~$0.01 / 1M Input
@@ -35,14 +36,16 @@ SOP_MODEL = os.getenv("SOP_MODEL", "inclusionai/ling-2.6-flash")          # ~$0.
 # Frame Analysis & Performance Tuning
 MAX_FRAMES_TO_ANALYZE = int(os.getenv("MAX_FRAMES_TO_ANALYZE", "16"))    # Safe batch size under 60 RPM
 VISION_IMAGE_MAX_DIM = int(os.getenv("VISION_IMAGE_MAX_DIM", "384"))      # Keeps image token cost low
-MAX_CONCURRENT_VISION_WORKERS = int(os.getenv("MAX_CONCURRENT_VISION_WORKERS", "3")) # Safeguard against 429 concurrency cap
+MAX_CONCURRENT_VISION_WORKERS = int(os.getenv("MAX_CONCURRENT_VISION_WORKERS", "2")) # Safeguard against 429 concurrency cap
 
 # API Rules
 AICREDITS_TIMEOUT_SECONDS = float(os.getenv("AICREDITS_TIMEOUT_SECONDS", "120.0"))
 AICREDITS_MAX_RETRIES = int(os.getenv("AICREDITS_MAX_RETRIES", "2"))
 
-# OCR Command (Optional)
-TESSERACT_CMD = os.getenv("TESSERACT_CMD", None)
+# OCR Configuration
+# Using EasyOCR (pure Python) instead of Tesseract (requires external executable)
+# EasyOCR is compatible with security policies that block executable downloads
+OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 # --- Elasticsearch Configuration ---
