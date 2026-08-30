@@ -23,6 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/upload" className="transition hover:text-amber-400">
                 New Job
               </Link>
+              <Link href="/sops" className="transition hover:text-blue-400">
+                Monitor SOPs
+              </Link>
             </nav>
           </div>
         </header>

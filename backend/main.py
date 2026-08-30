@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import FRONTEND_ORIGIN
-from app.routers import sop_generation, video_processing
+from app.routers import sop_generation, video_processing, sop_monitoring
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +30,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=[
+        FRONTEND_ORIGIN,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,6 +42,7 @@ app.add_middleware(
 
 app.include_router(video_processing.router)
 app.include_router(sop_generation.router)
+app.include_router(sop_monitoring.router)
 
 
 @app.get("/")

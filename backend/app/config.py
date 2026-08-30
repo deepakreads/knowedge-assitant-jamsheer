@@ -30,7 +30,8 @@ AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-xxxxxxxxxxxxxxxxxxxx
 
 
 # AI Model Selection (Cheapest options selected)
-VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-4b-it")          # ~$0.05 / 1M Input
+#VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-4b-it")          # ~$0.05 / 1M Input
+VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-12b-it")          # ~$0.15 / 1M Input
 SOP_MODEL = os.getenv("SOP_MODEL", "inclusionai/ling-2.6-flash")          # ~$0.01 / 1M Input
 
 # Frame Analysis & Performance Tuning

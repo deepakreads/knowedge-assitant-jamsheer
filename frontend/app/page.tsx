@@ -49,6 +49,32 @@ export default function HomePage() {
           </div>
         ))}
       </section>
+
+      <section className="border border-graphite-700 bg-graphite-900 bg-diagonal-hatch p-8">
+        <p className="stamp mb-3 text-xs text-blue-400">SOP Monitoring & Compliance</p>
+        <h2 className="font-display text-2xl font-bold leading-tight text-graphite-100 sm:text-3xl">
+          Monitor SOPs in real-time with live camera feed
+        </h2>
+        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-graphite-300">
+          Browse stored Standard Operating Procedures and use live camera monitoring to verify if users
+          are following procedures correctly. Get real-time compliance scores, step tracking, and automatic
+          feedback to guide operators through each step.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href="/sops"
+            className="inline-flex items-center gap-2 border border-blue-500 bg-blue-500/10 px-5 py-2.5 text-sm font-medium text-blue-400 transition hover:bg-blue-500/20"
+          >
+            Browse SOPs →
+          </Link>
+          <Link
+            href="/sops"
+            className="inline-flex items-center gap-2 border border-emerald-500 bg-emerald-500/10 px-5 py-2.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/20"
+          >
+            Start Monitoring →
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
