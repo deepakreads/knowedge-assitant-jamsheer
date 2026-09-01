@@ -1,7 +1,10 @@
 import logging
 import time
+import base64
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
+from pathlib import Path
 
 from app.config import MAX_CONCURRENT_VISION_WORKERS, VISION_MODEL
 from app.schemas.models import FrameRecord, VisionObservation
@@ -110,3 +113,45 @@ def analyze_frames(frames: List[FrameRecord]) -> List[VisionObservation]:
     valid_observations = [obs for obs in results if obs is not None]
     logger.info("Vision analysis complete: %d/%d valid observations.", len(valid_observations), len(frames))
     return valid_observations
+
+
+async def analyze_frame_with_prompt(frame_base64: str, custom_prompt: str) -> str:
+    """
+    Analyze a base64-encoded frame with a custom prompt for real-time monitoring.
+
+    Args:
+        frame_base64: Base64-encoded JPEG frame data
+        custom_prompt: Custom prompt for analysis (e.g., SOP compliance check)
+
+    Returns:
+        Analysis text from the vision model
+    """
+    try:
+        # Decode base64 to temporary file
+        frame_data = base64.b64decode(frame_base64)
+
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp.write(frame_data)
+            tmp_path = tmp.name
+
+        try:
+            # Call AI service with the custom prompt
+            response = ai_service.generate(
+                model=VISION_MODEL,
+                prompt=custom_prompt,
+                images=[tmp_path],
+                system=VISION_SYSTEM_PROMPT,
+                temperature=0.3,
+                max_tokens=500,
+            )
+
+            logger.info("Frame analysis complete")
+            return response
+
+        finally:
+            # Clean up temporary file
+            Path(tmp_path).unlink(missing_ok=True)
+
+    except Exception as e:
+        logger.error(f"Frame analysis failed: {e}")
+        raise

@@ -1,6 +1,9 @@
 import time
 import logging
+import base64
+import io
 from typing import Dict, List, Optional
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +46,8 @@ class SOPMonitoringService:
 
             current_step = self.sop["steps"][self.current_step]
 
-            # For MVP, calculate compliance based on step progress
-            # In full implementation, this would call vision_service.analyze_frame()
-            compliance = self._calculate_compliance(current_step)
+            # Analyze the frame using vision AI
+            compliance = await self._analyze_frame_with_vision(frame_base64, current_step)
 
             # Generate feedback
             feedback = self._generate_feedback(compliance, current_step)
@@ -192,6 +194,86 @@ class SOPMonitoringService:
             "progress_percent": 100,
             "completed": True,
         }
+
+    async def _analyze_frame_with_vision(self, frame_base64: str, step: dict) -> float:
+        """
+        Analyze frame using vision AI and compare against SOP step.
+
+        Returns compliance score 0-100.
+        """
+        try:
+            from app.services import vision_service
+
+            # Create vision prompt for this step
+            tools_str = ", ".join(step.get("tools", [])) or "no specific tools"
+            prompt = f"""Analyze this manufacturing/industrial work image and answer:
+
+CURRENT SOP STEP: {step.get('title', 'Unknown')}
+INSTRUCTIONS: {step.get('description', '')}
+REQUIRED TOOLS: {tools_str}
+
+Please answer:
+1. What is the operator doing in this image?
+2. What tools are visible?
+3. Is the operator following the correct procedure for this step? (Yes/No/Partially)
+4. Are all required tools visible and being used correctly?
+5. Any safety concerns visible?
+6. Overall, how well is this step being performed? (Percentage 0-100%)
+
+Be very specific and base your assessment only on what you can see in the image."""
+
+            # Send frame to vision service
+            logger.info(f"Analyzing frame for step: {step.get('title', 'Unknown')}")
+            analysis = await vision_service.analyze_frame_with_prompt(
+                frame_base64,
+                prompt
+            )
+
+            # Parse the analysis to calculate compliance
+            compliance = self._parse_vision_analysis(analysis, step)
+            logger.info(f"Frame compliance: {compliance}%")
+
+            return compliance
+
+        except Exception as e:
+            logger.error(f"Vision analysis failed: {e}")
+            # Fallback to time-based compliance if vision fails
+            return self._calculate_compliance(step)
+
+    def _parse_vision_analysis(self, analysis: str, step: dict) -> float:
+        """
+        Parse vision AI response and calculate compliance score.
+
+        Scoring:
+        - Following correct procedure: 50 points
+        - Tools visible and correct: 30 points
+        - No safety concerns: 20 points
+        """
+        score = 0
+        analysis_lower = analysis.lower()
+
+        # Check if following correct procedure (50 points)
+        if "yes" in analysis_lower and ("correct" in analysis_lower or "proper" in analysis_lower):
+            score += 50
+        elif "partially" in analysis_lower:
+            score += 25
+
+        # Check for required tools (30 points)
+        required_tools = step.get("tools", [])
+        if required_tools:
+            tools_found = sum(1 for tool in required_tools if tool.lower() in analysis_lower)
+            if tools_found == len(required_tools):
+                score += 30
+            elif tools_found > 0:
+                score += int(30 * (tools_found / len(required_tools)))
+        else:
+            score += 30  # No tools required
+
+        # Check for safety concerns (20 points)
+        if "unsafe" not in analysis_lower and "danger" not in analysis_lower and "safety" not in analysis_lower:
+            score += 20
+
+        return min(100, max(0, score))
 
     def get_session_summary(self) -> Dict:
         """Get summary of monitoring session"""
