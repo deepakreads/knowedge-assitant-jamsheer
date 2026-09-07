@@ -75,6 +75,23 @@ export default function HomePage() {
           </Link>
         </div>
       </section>
+
+      <section className="border border-graphite-700 bg-graphite-900 bg-diagonal-hatch p-8">
+        <p className="stamp mb-3 text-xs text-green-400">Machine-Based Discovery</p>
+        <h2 className="font-display text-2xl font-bold leading-tight text-graphite-100 sm:text-3xl">
+          Find the right SOP for your machine
+        </h2>
+        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-graphite-300">
+          Search for Standard Operating Procedures by department, machine name, or upload an image
+          of your machine. Our AI will identify what you have and find the matching procedures.
+        </p>
+        <Link
+          href="/find-sop"
+          className="mt-6 inline-flex items-center gap-2 border border-green-500 bg-green-500/10 px-5 py-2.5 text-sm font-medium text-green-400 transition hover:bg-green-500/20"
+        >
+          Find SOP by Machine →
+        </Link>
+      </section>
     </div>
   );
 }

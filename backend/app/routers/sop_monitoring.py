@@ -226,6 +226,11 @@ async def websocket_monitor(websocket: WebSocket, sop_id: str):
     """
     WebSocket endpoint for real-time SOP monitoring with live camera feed.
 
+    Query Parameters:
+        major_steps_only (optional): "true" or "false" - if true, only evaluate major steps
+                                     (safety-critical, with tools, long duration, etc.)
+                                     Default: true
+
     Protocol:
         Client → Server:
             {
@@ -245,7 +250,9 @@ async def websocket_monitor(websocket: WebSocket, sop_id: str):
                 "time_remaining": 15,
                 "progress_percent": 20,
                 "tools_required": ["wrench"],
-                "step_number": 1
+                "step_number": 1,
+                "is_major_step": true,
+                "major_steps_count": 3
             }
     """
     await websocket.accept()
@@ -262,20 +269,30 @@ async def websocket_monitor(websocket: WebSocket, sop_id: str):
             await websocket.close(code=4004)
             return
 
+        # Check query parameters for major_steps_only setting
+        # Default to True (focus on major steps only)
+        major_steps_only = websocket.query_params.get("major_steps_only", "true").lower() == "true"
+
         # Initialize monitoring service
-        monitoring_service = SOPMonitoringService(sop)
+        monitoring_service = SOPMonitoringService(sop, focus_major_steps=major_steps_only)
         session_id = f"{sop_id}_{id(websocket)}"
         _active_sessions[session_id] = monitoring_service
 
-        logger.info(f"Started monitoring session {session_id} for SOP {sop_id}")
+        logger.info(
+            f"Started monitoring session {session_id} for SOP {sop_id} "
+            f"(major_steps_only={major_steps_only})"
+        )
 
         # Send initial SOP info
+        major_steps_count = len(monitoring_service.major_step_indices) if monitoring_service.major_step_indices else len(sop.get("steps", []))
         await websocket.send_json({
             "type": "sop_loaded",
             "sop_id": sop_id,
             "sop_title": sop.get("title", "Unknown"),
             "total_steps": len(sop.get("steps", [])),
-            "message": "SOP loaded. Camera feed ready. Send frames to begin monitoring."
+            "major_steps_count": major_steps_count if major_steps_only else len(sop.get("steps", [])),
+            "major_steps_only": major_steps_only,
+            "message": f"SOP loaded. Camera feed ready. Monitoring {major_steps_count} {'major' if major_steps_only else 'total'} steps."
         })
 
         # Main monitoring loop

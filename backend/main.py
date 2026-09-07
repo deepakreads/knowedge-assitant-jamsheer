@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import FRONTEND_ORIGIN
-from app.routers import sop_generation, video_processing, sop_monitoring
+from app.routers import sop_generation, video_processing, sop_monitoring, machine_sop_finder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +43,7 @@ app.add_middleware(
 app.include_router(video_processing.router)
 app.include_router(sop_generation.router)
 app.include_router(sop_monitoring.router)
+app.include_router(machine_sop_finder.router)
 
 
 @app.get("/")

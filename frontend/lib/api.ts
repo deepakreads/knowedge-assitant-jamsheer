@@ -77,13 +77,19 @@ export async function uploadVideo(
   file: File,
   title: string,
   description: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  department?: string,
+  machineName?: string,
+  machineImage?: File | null
 ): Promise<UploadResponse> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append("file", file);
     if (title) form.append("title", title);
     if (description) form.append("description", description);
+    if (department) form.append("department", department);
+    if (machineName) form.append("machine_name", machineName);
+    if (machineImage) form.append("machine_picture", machineImage);
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}/api/video-processing/upload`);

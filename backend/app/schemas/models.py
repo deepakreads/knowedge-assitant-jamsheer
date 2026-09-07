@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
 
@@ -122,6 +122,7 @@ class Sop(BaseModel):
     estimated_duration: str = "Not specified in the source video."
     source_video: str
     created_at: str = Field(default_factory=now_iso)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class Job(BaseModel):
@@ -144,3 +145,4 @@ class Job(BaseModel):
     activity_timeline: List[ActivityTimelineEntry] = Field(default_factory=list)
 
     sop_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)

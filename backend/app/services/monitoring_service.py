@@ -11,25 +11,45 @@ logger = logging.getLogger(__name__)
 class SOPMonitoringService:
     """Real-time SOP compliance monitoring with vision-based analysis"""
 
-    def __init__(self, sop: dict):
-        """Initialize monitoring service for a specific SOP"""
+    def __init__(self, sop: dict, focus_major_steps: bool = True):
+        """
+        Initialize monitoring service for a specific SOP
+
+        Args:
+            sop: The SOP data dictionary
+            focus_major_steps: If True, only evaluate major steps for compliance.
+                              Minor steps are skipped automatically.
+        """
         self.sop = sop
         self.current_step = 0
         self.step_start_time = time.time()
         self.compliance_history = []
         self.total_compliance = 0
         self.frames_analyzed = 0
+        self.focus_major_steps = focus_major_steps
+
+        # Identify major steps on initialization
+        self.major_step_indices = self._identify_major_steps() if focus_major_steps else None
 
         logger.info(f"Initialized monitoring for SOP: {sop.get('title', 'Unknown')}")
+        if focus_major_steps and self.major_step_indices:
+            logger.info(
+                f"Major step mode: focusing on {len(self.major_step_indices)} major steps "
+                f"out of {len(sop.get('steps', []))} total steps"
+            )
 
     async def analyze_frame(self, frame_base64: str) -> Dict:
         """
-        Analyze current frame against current SOP step
+        Analyze current frame against current SOP step.
+
+        If focus_major_steps is enabled, automatically skips minor steps.
 
         Returns:
             {
                 "current_step": int,
                 "total_steps": int,
+                "major_steps_count": int (if major step mode),
+                "is_major_step": bool (if major step mode),
                 "step_title": str,
                 "compliance": float (0-100),
                 "overall_compliance": float (0-100),
@@ -46,7 +66,17 @@ class SOPMonitoringService:
 
             current_step = self.sop["steps"][self.current_step]
 
-            # Analyze the frame using vision AI
+            # Check if this is a major step (if major step mode enabled)
+            is_major_step = self._is_major_step(self.current_step)
+
+            # If minor step mode and not a major step, skip to next
+            if self.focus_major_steps and not is_major_step:
+                logger.info(f"Skipping minor step: {current_step.get('title', 'Unknown')}")
+                self._advance_step()
+                # Recursively analyze next frame for the next step
+                return await self.analyze_frame(frame_base64)
+
+            # Analyze the frame using vision AI (for major steps only)
             compliance = await self._analyze_frame_with_vision(frame_base64, current_step)
 
             # Generate feedback
@@ -57,13 +87,16 @@ class SOPMonitoringService:
             if step_complete:
                 self._advance_step()
 
-            # Track compliance history
+            # Track compliance history (only for major steps)
             self.compliance_history.append(compliance)
             self.frames_analyzed += 1
             self.total_compliance = sum(self.compliance_history) / len(self.compliance_history)
 
-            # Calculate progress
-            progress_percent = (self.current_step / len(self.sop["steps"])) * 100
+            # Calculate progress based on major steps if applicable
+            if self.focus_major_steps and self.major_step_indices:
+                progress_percent = (self.major_step_indices.index(self.current_step) / len(self.major_step_indices)) * 100 if self.current_step in self.major_step_indices else 0
+            else:
+                progress_percent = (self.current_step / len(self.sop["steps"])) * 100
 
             result = {
                 "current_step": self.current_step + 1,
@@ -80,6 +113,11 @@ class SOPMonitoringService:
                 "tools_required": current_step.get("tools", []),
                 "step_number": self.current_step + 1,
             }
+
+            # Add major step info if applicable
+            if self.focus_major_steps:
+                result["is_major_step"] = is_major_step
+                result["major_steps_count"] = len(self.major_step_indices) if self.major_step_indices else 0
 
             logger.debug(f"Frame analysis complete - Step {result['current_step']}, Compliance: {compliance}%")
             return result
@@ -284,3 +322,65 @@ Be very specific and base your assessment only on what you can see in the image.
             "frames_analyzed": self.frames_analyzed,
             "completed": self.current_step >= len(self.sop.get("steps", [])),
         }
+
+    def _identify_major_steps(self) -> List[int]:
+        """
+        Identify which steps are "major" steps for compliance evaluation.
+
+        A step is considered "major" if ANY of these conditions are true:
+        1. Has safety notes (safety-critical)
+        2. Has tools required (manual/hands-on work)
+        3. Duration > 30 seconds (significant operation)
+        4. Has quality check requirements
+        5. Explicitly marked as important
+
+        Returns: List of step indices (0-based) that are major
+        """
+        major_indices = []
+        steps = self.sop.get("steps", [])
+
+        for idx, step in enumerate(steps):
+            is_major = False
+
+            # Check safety notes
+            if step.get("safety_notes"):
+                is_major = True
+                logger.debug(f"Step {idx + 1} '{step.get('title')}': Major (safety-critical)")
+
+            # Check tools required
+            if step.get("tools"):
+                is_major = True
+                logger.debug(f"Step {idx + 1} '{step.get('title')}': Major (has tools)")
+
+            # Check duration
+            duration = step.get("duration", 0)
+            if duration > 30:
+                is_major = True
+                logger.debug(f"Step {idx + 1} '{step.get('title')}': Major (duration > 30s)")
+
+            # Check quality check
+            if step.get("quality_check"):
+                is_major = True
+                logger.debug(f"Step {idx + 1} '{step.get('title')}': Major (quality check)")
+
+            # Check if marked as important in title
+            title = step.get("title", "").lower()
+            if any(keyword in title for keyword in ["critical", "important", "verify", "inspect", "check"]):
+                is_major = True
+                logger.debug(f"Step {idx + 1} '{step.get('title')}': Major (critical keyword)")
+
+            if is_major:
+                major_indices.append(idx)
+
+        if not major_indices:
+            logger.warning("No major steps identified; all steps will be evaluated")
+            # If no major steps found, treat all steps as major
+            major_indices = list(range(len(steps)))
+
+        return major_indices
+
+    def _is_major_step(self, step_index: int) -> bool:
+        """Check if a step is a major step"""
+        if not self.focus_major_steps or self.major_step_indices is None:
+            return True  # If not in major step mode, all steps are "major"
+        return step_index in self.major_step_indices

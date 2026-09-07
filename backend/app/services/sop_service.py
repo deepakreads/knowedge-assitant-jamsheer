@@ -8,6 +8,7 @@ from app.config import SOP_MODEL, SOPS_DIR
 from app.schemas.models import ActivityTimelineEntry, Sop, SopStep
 from app.services import ai_service
 from app.services import elasticsearch_service
+from app.services import video_type_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +65,26 @@ def generate_sop(
     video_filename: str,
     timeline: List[ActivityTimelineEntry],
     title_hint: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    video_type: str = "MACHINE_INSTRUCTIONS",
 ) -> Sop:
     if not timeline:
         raise ValueError("Cannot generate an SOP from an empty activity timeline.")
 
-    logger.info("Generating detailed SOP for job %s using %s...", job_id, SOP_MODEL)
+    logger.info("Generating detailed SOP for job %s using %s (video_type: %s)...", job_id, SOP_MODEL, video_type)
 
-    prompt = SOP_PROMPT_TEMPLATE.format(
+    # Select appropriate prompts based on video type
+    if video_type == "DEMO_VIDEO":
+        system_prompt = video_type_prompts.DEMO_VIDEO_SYSTEM_PROMPT
+        sop_prompt = video_type_prompts.DEMO_VIDEO_SOP_PROMPT
+        logger.info("Using DEMO_VIDEO prompts for SOP generation")
+    else:
+        # Default to machine instructions for MACHINE_INSTRUCTIONS or UNKNOWN
+        system_prompt = video_type_prompts.MACHINE_VIDEO_SYSTEM_PROMPT
+        sop_prompt = video_type_prompts.MACHINE_VIDEO_SOP_PROMPT
+        logger.info("Using MACHINE_VIDEO prompts for SOP generation")
+
+    prompt = sop_prompt.format(
         timeline_json=_timeline_to_prompt_json(timeline),
     )
 
@@ -81,7 +95,7 @@ def generate_sop(
         raw = ai_service.generate(
             model=SOP_MODEL,
             prompt=prompt,
-            system=SOP_SYSTEM_PROMPT,
+            system=system_prompt,
             format_json=True,
             temperature=0.0,
             max_tokens=3072,
@@ -170,6 +184,7 @@ def generate_sop(
         quality_checks=quality_checks,
         estimated_duration=estimated_duration,
         source_video=video_filename,
+        metadata=metadata or {},
     )
     save_sop(sop)
     gc.collect()

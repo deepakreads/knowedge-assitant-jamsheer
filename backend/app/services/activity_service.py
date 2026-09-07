@@ -10,6 +10,7 @@ from app.schemas.models import (
     VisionObservation,
 )
 from app.services import ai_service
+from app.services import video_type_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -128,14 +129,26 @@ def build_activity_timeline(
     vision_observations: List[VisionObservation],
     transcript: List[TranscriptSegment],
     ocr_results: List[OcrResult],
+    video_type: str = "MACHINE_INSTRUCTIONS",
 ) -> List[ActivityTimelineEntry]:
     if not vision_observations:
         logger.warning("No vision observations available; cannot build timeline.")
         return []
 
-    logger.info("Building activity timeline with %s model...", SOP_MODEL)
+    logger.info("Building activity timeline with %s model (video_type: %s)...", SOP_MODEL, video_type)
 
-    prompt = ACTIVITY_PROMPT_TEMPLATE.format(
+    # Select appropriate prompts based on video type
+    if video_type == "DEMO_VIDEO":
+        system_prompt = video_type_prompts.DEMO_VIDEO_SYSTEM_PROMPT
+        activity_prompt = video_type_prompts.DEMO_VIDEO_ACTIVITY_PROMPT
+        logger.info("Using DEMO_VIDEO prompts for activity timeline")
+    else:
+        # Default to machine instructions for MACHINE_INSTRUCTIONS or UNKNOWN
+        system_prompt = video_type_prompts.MACHINE_VIDEO_SYSTEM_PROMPT
+        activity_prompt = video_type_prompts.MACHINE_VIDEO_ACTIVITY_PROMPT
+        logger.info("Using MACHINE_VIDEO prompts for activity timeline")
+
+    prompt = activity_prompt.format(
         visual_evidence=_format_visual_evidence(vision_observations),
         transcript=_format_transcript(transcript),
         ocr_text=_format_ocr(ocr_results),
@@ -145,7 +158,7 @@ def build_activity_timeline(
         raw = ai_service.generate(
             model=SOP_MODEL,
             prompt=prompt,
-            system=ACTIVITY_SYSTEM_PROMPT,
+            system=system_prompt,
             format_json=True,
             temperature=0.0,
             max_tokens=1800,

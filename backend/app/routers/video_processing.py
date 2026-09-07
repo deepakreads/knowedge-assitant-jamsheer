@@ -29,7 +29,21 @@ async def upload_video(
     file: UploadFile = File(...),
     title: str = Form(None),
     description: str = Form(None),
+    department: str = Form(None),
+    machine_name: str = Form(None),
+    machine_picture: UploadFile = File(None),
 ):
+    """
+    Upload a video for SOP generation with optional machine metadata.
+
+    Args:
+        file: Video file (required)
+        title: SOP title (optional)
+        description: SOP description (optional)
+        department: Machine department (optional)
+        machine_name: Machine name (optional)
+        machine_picture: Machine image file (optional)
+    """
     extension = Path(file.filename or "").suffix.lower()
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
         raise HTTPException(
@@ -64,6 +78,26 @@ async def upload_video(
         saved_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # Save machine picture if provided
+    machine_picture_path = None
+    if machine_picture:
+        pic_extension = Path(machine_picture.filename or "").suffix.lower()
+        if pic_extension not in {".jpg", ".jpeg", ".png", ".gif"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported image type '{pic_extension}'. Allowed: .jpg, .jpeg, .png, .gif",
+            )
+
+        pic_filename = f"{job_id}_machine{pic_extension}"
+        pic_path = UPLOADS_DIR / pic_filename
+        try:
+            pic_content = await machine_picture.read()
+            with open(pic_path, "wb") as pic_file:
+                pic_file.write(pic_content)
+            machine_picture_path = str(pic_path)
+        except Exception as e:
+            logger.warning(f"Failed to save machine picture: {e}")
+
     job = Job(
         job_id=job_id,
         status=JobStatus.PROCESSING,
@@ -74,13 +108,30 @@ async def upload_video(
         title=title,
         description=description,
     )
+
+    # Store additional metadata
+    job.metadata = {
+        "department": department,
+        "machine_name": machine_name,
+        "machine_picture": machine_picture_path,
+    }
+
     job_store.save_job(job)
 
     background_tasks.add_task(run_pipeline, job_id)
 
     return JSONResponse(
         status_code=202,
-        content={"job_id": job_id, "status": "processing", "progress": 0},
+        content={
+            "job_id": job_id,
+            "status": "processing",
+            "progress": 0,
+            "metadata": {
+                "department": department,
+                "machine_name": machine_name,
+                "has_machine_picture": machine_picture_path is not None,
+            }
+        },
     )
 
 

@@ -9,10 +9,15 @@ const ALLOWED_EXTENSIONS = [".mp4", ".avi", ".mov", ".mkv"];
 export default function UploadPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const machineImageInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [department, setDepartment] = useState("");
+  const [machineName, setMachineName] = useState("");
+  const [machineImage, setMachineImage] = useState<File | null>(null);
+  const [machineImagePreview, setMachineImagePreview] = useState<string | null>(null);
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -44,11 +49,31 @@ export default function UploadPage() {
     setError(null);
     setUploadPercent(0);
     try {
-      const result = await uploadVideo(file, title, description, setUploadPercent);
+      const result = await uploadVideo(
+        file,
+        title,
+        description,
+        setUploadPercent,
+        department,
+        machineName,
+        machineImage
+      );
       router.push(`/processing/${result.job_id}`);
     } catch (err) {
       setUploadPercent(null);
       setError(err instanceof Error ? err.message : "Upload failed.");
+    }
+  }
+
+  function handleMachineImageSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      setMachineImage(file);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setMachineImagePreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
     }
   }
 
@@ -59,7 +84,7 @@ export default function UploadPage() {
       <p className="stamp mb-2 text-xs text-amber-400">Step 1 of 3</p>
       <h1 className="font-display text-2xl font-bold text-graphite-100">Submit a training video</h1>
       <p className="mt-2 text-sm text-graphite-400">
-        MP4, AVI, MOV, or MKV. The video is processed locally — nothing leaves your Ollama host.
+        MP4, AVI, MOV, or MKV.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-6">
@@ -119,6 +144,66 @@ export default function UploadPage() {
             className="border border-graphite-700 bg-graphite-900 px-3 py-2 text-sm text-graphite-100 outline-none placeholder:text-graphite-600 focus:border-amber-500"
           />
         </label>
+
+        <div className="border-t border-graphite-700 pt-6">
+          <p className="stamp mb-4 text-xs text-graphite-400">Machine Information (optional)</p>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm text-graphite-300">Department</span>
+            <input
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              placeholder="e.g., Manufacturing, Assembly, Quality Control"
+              className="border border-graphite-700 bg-graphite-900 px-3 py-2 text-sm text-graphite-100 outline-none placeholder:text-graphite-600 focus:border-amber-500"
+            />
+          </label>
+
+          <label className="mt-3 flex flex-col gap-1.5">
+            <span className="text-sm text-graphite-300">Machine Name</span>
+            <input
+              value={machineName}
+              onChange={(e) => setMachineName(e.target.value)}
+              placeholder="e.g., Injection Molding Machine A, CNC Lathe 5"
+              className="border border-graphite-700 bg-graphite-900 px-3 py-2 text-sm text-graphite-100 outline-none placeholder:text-graphite-600 focus:border-amber-500"
+            />
+          </label>
+
+          <label className="mt-3 flex flex-col gap-1.5">
+            <span className="text-sm text-graphite-300">Machine Picture (optional)</span>
+            <div className="flex gap-3">
+              <label className="flex-1 cursor-pointer">
+                <div className="border border-graphite-700 bg-graphite-900 px-3 py-2 text-center text-sm text-graphite-400 hover:border-amber-500 hover:bg-amber-500/5 transition">
+                  📷 Upload Image
+                </div>
+                <input
+                  ref={machineImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleMachineImageSelect}
+                  className="hidden"
+                />
+              </label>
+              {machineImage && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMachineImage(null);
+                    setMachineImagePreview(null);
+                  }}
+                  className="border border-graphite-600 bg-graphite-900 px-3 py-2 text-sm text-graphite-400 hover:border-signal-red hover:text-signal-red transition"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {machineImagePreview && (
+              <div className="mt-3 max-w-xs border border-graphite-700 bg-graphite-950 p-2">
+                <img src={machineImagePreview} alt="Machine" className="w-full rounded" />
+                <p className="mt-2 text-xs text-graphite-500">{machineImage?.name}</p>
+              </div>
+            )}
+          </label>
+        </div>
 
         {error && (
           <p className="border border-signal-red/40 bg-signal-red/10 px-3 py-2 text-sm text-signal-red">

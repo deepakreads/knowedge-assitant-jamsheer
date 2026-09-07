@@ -26,18 +26,20 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 
 # AICredits Configuration
 AICREDITS_BASE_URL = os.getenv("AICREDITS_BASE_URL", "https://api.aicredits.in/v1")
-AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+#AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+AICREDITS_API_KEY = os.getenv("AICREDITS_API_KEY", "sk-live-16130c502fa6753b64361996656811d585213b8f9af166108559f8692b81c3c2")
 
 
 # AI Model Selection (Cheapest options selected)
 #VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-4b-it")          # ~$0.05 / 1M Input
 VISION_MODEL = os.getenv("VISION_MODEL", "google/gemma-3-12b-it")          # ~$0.15 / 1M Input
-SOP_MODEL = os.getenv("SOP_MODEL", "inclusionai/ling-2.6-flash")          # ~$0.01 / 1M Input
+#SOP_MODEL = os.getenv("SOP_MODEL", "inclusionai/ling-2.6-flash")          # ~$0.01 / 1M Input
+SOP_MODEL = os.getenv("SOP_MODEL", "google/gemma-3-12b-it")   
 
 # Frame Analysis & Performance Tuning
 MAX_FRAMES_TO_ANALYZE = int(os.getenv("MAX_FRAMES_TO_ANALYZE", "16"))    # Safe batch size under 60 RPM
 VISION_IMAGE_MAX_DIM = int(os.getenv("VISION_IMAGE_MAX_DIM", "384"))      # Keeps image token cost low
-MAX_CONCURRENT_VISION_WORKERS = int(os.getenv("MAX_CONCURRENT_VISION_WORKERS", "2")) # Safeguard against 429 concurrency cap
+MAX_CONCURRENT_VISION_WORKERS = int(os.getenv("MAX_CONCURRENT_VISION_WORKERS", "3")) # Safeguard against 429 concurrency cap
 
 # API Rules
 AICREDITS_TIMEOUT_SECONDS = float(os.getenv("AICREDITS_TIMEOUT_SECONDS", "120.0"))
