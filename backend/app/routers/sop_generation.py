@@ -22,11 +22,12 @@ class FrameEvaluationResponse(BaseModel):
     violation_type: Optional[str] = None  # "out_of_order", "skipped", "incorrect", None
     expected_step: Optional[int] = None
     workflow_started: bool = False
+    inactivity_alarm: bool = False  # True if no activity started within 5 seconds
 
 
 class WorkflowSession:
     """Tracks a single monitoring session's workflow progression."""
-    
+
     def __init__(self, sop_id: str, max_steps: int):
         self.sop_id = sop_id
         self.max_steps = max_steps
@@ -42,6 +43,21 @@ class WorkflowSession:
         self.CONSISTENCY_THRESHOLD = 1  # Reduced to 1 for faster transitions
         self.step_history: List[int] = []  # Rolling history of detected steps
         self.MAX_HISTORY = 10  # Keep last N detections
+
+        # Step state tracking for violation recovery
+        self.step_violation_state: Dict[int, bool] = {}  # step_id -> has_been_violated
+        self.step_active_violation: Dict[int, Optional[str]] = {}  # step_id -> current_violation_type (None if cleared)
+        self.consecutive_correct_frames: int = 0  # Frames showing correct state (for stability)
+
+        # Detection loss tracking (prevent reset on temporary occlusion/detection loss)
+        self.consecutive_zero_detections: int = 0  # Frames where step == 0
+        self.ZERO_DETECTION_RESET_THRESHOLD: int = 10  # Require 10 consecutive zero frames before reset
+
+        # 5-second inactivity alarm tracking
+        self.monitoring_started_at: Optional[datetime] = None  # When monitoring actually started
+        self.activity_started_at: Optional[datetime] = None  # When meaningful activity was first detected
+        self.inactivity_alarm_active: bool = False  # Is the 5-second inactivity alarm on?
+        self.INACTIVITY_TIMEOUT_SEC: float = 5.0  # 5 seconds to start activity
     
     def backfill_missed_steps(self, detected_step: int) -> List[int]:
         """
@@ -110,59 +126,133 @@ class WorkflowSession:
         
         return False, "unexpected"
     
+    def start_monitoring(self):
+        """Mark the beginning of monitoring session. Call once when monitoring starts."""
+        if not self.monitoring_started_at:
+            self.monitoring_started_at = datetime.utcnow()
+            logger.info(f"Monitoring started for session {self.session_id}")
+
+    def update_inactivity_alarm(self) -> bool:
+        """
+        Check and update 5-second inactivity alarm state.
+        Returns True if alarm is currently active.
+        """
+        if not self.monitoring_started_at:
+            return False
+
+        # If activity hasn't started yet, check if 5 seconds have elapsed
+        if not self.activity_started_at:
+            elapsed = (datetime.utcnow() - self.monitoring_started_at).total_seconds()
+            if elapsed >= self.INACTIVITY_TIMEOUT_SEC:
+                self.inactivity_alarm_active = True
+                return True
+            return False
+
+        # Activity has started, alarm is OFF
+        self.inactivity_alarm_active = False
+        return False
+
+    def mark_activity_started(self):
+        """Mark when user's meaningful activity begins."""
+        if not self.activity_started_at:
+            self.activity_started_at = datetime.utcnow()
+            self.inactivity_alarm_active = False
+            logger.info(f"Activity started for session {self.session_id}")
+
     def update_step_detection(self, detected_step: int) -> tuple[bool, Optional[Dict]]:
         """
         Process detected step with intelligent backfill for missed frames.
+        Supports violation recovery: if a violated step becomes correct, the violation is cleared.
+        Prevents reset on temporary detection loss.
         Returns (state_updated, violation_info)
         """
         self.frame_count += 1
-        
+
         # Track step history for pattern detection
         self.step_history.append(detected_step)
         if len(self.step_history) > self.MAX_HISTORY:
             self.step_history.pop(0)
-        
+
+        # Track consecutive zero detections (prevent reset on temporary loss)
+        if detected_step == 0:
+            self.consecutive_zero_detections += 1
+        else:
+            self.consecutive_zero_detections = 0
+            # Mark that activity has started when we detect a non-zero step
+            if self.workflow_initialized or detected_step > 0:
+                self.mark_activity_started()
+
         if detected_step == self.last_detected_step:
             self.consistent_step_count += 1
+            # Track consecutive frames showing correct state (for recovery stability)
+            if detected_step == self.current_step and self.step_active_violation.get(self.current_step):
+                self.consecutive_correct_frames += 1
+            else:
+                self.consecutive_correct_frames = 0
         else:
             self.consistent_step_count = 1
+            self.consecutive_correct_frames = 0
             self.last_detected_step = detected_step
-        
+
         # Need consistent detection before updating state
         if self.consistent_step_count < self.CONSISTENCY_THRESHOLD:
             return False, None
-        
+
         # Check if this is workflow start
         if self.detect_workflow_start(detected_step):
             return True, None
-        
+
+        # VIOLATION RECOVERY: Check if a previously violated step is now correct
+        if (self.step_active_violation.get(self.current_step) and
+            detected_step == self.current_step and
+            self.consecutive_correct_frames >= 2):  # Require 2 frames of correct state
+            # Step has recovered from violation
+            self.step_active_violation[self.current_step] = None  # Clear active violation
+            self.consecutive_correct_frames = 0
+            return True, None  # Return success without violation
+
         # Validate transition
         is_valid, violation_type = self.validate_step_transition(detected_step)
-        
+
         if not is_valid and violation_type:
+            # Mark that this step has a violation
+            if self.current_step not in self.step_violation_state:
+                self.step_violation_state[self.current_step] = True
+
+            # Set active violation (different from historical - this is current)
+            if self.step_active_violation.get(self.current_step) != violation_type:
+                self.step_active_violation[self.current_step] = violation_type
+
             violation = {
                 "type": violation_type,
                 "frame_number": self.frame_count,
                 "detected_step": detected_step,
                 "expected_step": self.current_step,
                 "timestamp": datetime.utcnow().isoformat(),
+                "has_been_violated": self.step_violation_state.get(self.current_step, False),  # Historical flag
+                "is_currently_violated": True,  # Current state
             }
             self.violation_history.append(violation)
             return False, violation
-        
+
         # Valid transition - handle intelligent backfill
         if detected_step > self.current_step:
             # Backfill any intermediate steps that were missed
             backfilled = self.backfill_missed_steps(detected_step)
             for step_num in backfilled:
                 self.completed_steps.append(step_num)
-            
-            # Update current step
+
+            # Update current step - clear any violation state from previous step
+            if self.current_step in self.step_active_violation:
+                self.step_active_violation[self.current_step] = None
+
+            # Move to new step
             self.current_step = detected_step
             if detected_step not in self.completed_steps:
                 self.completed_steps.append(detected_step)
             self.consistent_step_count = 0
-        
+            self.consecutive_correct_frames = 0
+
         return True, None
 
 
@@ -202,40 +292,62 @@ async def evaluate_camera_frame(sop_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Empty frame received.")
 
     session = get_or_create_session(sop_id, len(sop.steps))
-    
+    session.start_monitoring()  # Initialize monitoring start time on first frame
+
     eval_dir = FRAMES_DIR / "evaluations" / sop_id
     eval_dir.mkdir(parents=True, exist_ok=True)
     temp_frame_path = eval_dir / f"frame_{uuid.uuid4()}.jpg"
-    
+
     try:
         with open(temp_frame_path, "wb") as f:
             f.write(image_bytes)
 
         steps_summary = "\n".join([f"Step {s.step_number}: {s.title} - {s.description}" for s in sop.steps])
         max_steps = len(sop.steps)
-        
-        prompt = (
-            f"You are a production-grade industrial vision system auditing strict SOP compliance.\n"
-            f"SOP: {sop.title}\n"
-            f"Required Steps in Strict Sequence (1→{max_steps}):\n{steps_summary}\n\n"
-            f"DETECTION STRATEGY:\n"
-            f"1. Step 0: Operator is idle/not yet started workflow.\n"
-            f"2. Step 1+: Workflow is active. Identify the HIGHEST step number visible or in progress.\n"
-            f"3. If you see evidence of later steps (tools, materials, positioning), report that higher step even if earlier steps aren't fully visible.\n"
-            f"4. Example: If you see final assembly happening (Step 5), report Step 5 even if you didn't explicitly see Steps 1-4 in this frame.\n"
-            f"5. This frame is ONE snapshot in a continuous workflow - use contextual reasoning about what must have happened before.\n\n"
-            f"CRITICAL COMPLIANCE RULES:\n"
-            f"- Steps must progress forward: 0→1→2→3...→{max_steps}. No backward movement.\n"
-            f"- Report true deviation only if steps are clearly out-of-order or undoing previous work.\n"
-            f"- Partial visibility of earlier steps is normal - focus on the active/current step.\n\n"
-            f"Return ONLY valid JSON:\n"
-            f'{{"compliant": boolean, "current_step_detected": "step name or what operator is doing now", "step_number": int (0 to {max_steps}), "deviation_detected": boolean, "message": "audit feedback"}}'
-        )
+
+        # Determine video type and use appropriate evaluation strategy
+        video_type = sop.metadata.get("video_type", "MACHINE_INSTRUCTIONS") if sop.metadata else "MACHINE_INSTRUCTIONS"
+
+        if video_type == "DEMO_VIDEO":
+            # For DEMO_VIDEO (LEGO, simple assembly): Task-centric compliance
+            from app.services import video_type_prompts
+            system_prompt = video_type_prompts.DEMO_VIDEO_COMPLIANCE_SYSTEM_PROMPT
+            prompt = (
+                f"SOP: {sop.title}\n"
+                f"Steps in sequence (1→{max_steps}):\n{steps_summary}\n\n"
+                f"Task compliance evaluation:\n"
+                f"1. Step 0: No task in progress (idle/waiting)\n"
+                f"2. Step 1+: Identify the HIGHEST step by object state (colors, positions, arrangements visible)\n"
+                f"3. Ignore hand movements, wrist rotations, grip styles, approach angles\n"
+                f"4. Focus on: object colors correct, positions correct, relationships correct, sequence maintained\n\n"
+                f"Return ONLY valid JSON:\n"
+                f'{{"compliant": boolean, "current_step_detected": "description of current task state", "step_number": int (0 to {max_steps}), "deviation_detected": boolean, "message": "audit feedback"}}'
+            )
+        else:
+            # For MACHINE_VIDEO (industrial equipment): Process-centric compliance
+            system_prompt = "You are a strict production SOP compliance auditor. Return only valid JSON."
+            prompt = (
+                f"You are a production-grade industrial vision system auditing strict SOP compliance.\n"
+                f"SOP: {sop.title}\n"
+                f"Required Steps in Strict Sequence (1→{max_steps}):\n{steps_summary}\n\n"
+                f"DETECTION STRATEGY:\n"
+                f"1. Step 0: Operator is idle/not yet started workflow.\n"
+                f"2. Step 1+: Workflow is active. Identify the HIGHEST step number visible or in progress.\n"
+                f"3. If you see evidence of later steps (tools, materials, positioning), report that higher step even if earlier steps aren't fully visible.\n"
+                f"4. Example: If you see final assembly happening (Step 5), report Step 5 even if you didn't explicitly see Steps 1-4 in this frame.\n"
+                f"5. This frame is ONE snapshot in a continuous workflow - use contextual reasoning about what must have happened before.\n\n"
+                f"CRITICAL COMPLIANCE RULES:\n"
+                f"- Steps must progress forward: 0→1→2→3...→{max_steps}. No backward movement.\n"
+                f"- Report true deviation only if steps are clearly out-of-order or undoing previous work.\n"
+                f"- Partial visibility of earlier steps is normal - focus on the active/current step.\n\n"
+                f"Return ONLY valid JSON:\n"
+                f'{{"compliant": boolean, "current_step_detected": "step name or what operator is doing now", "step_number": int (0 to {max_steps}), "deviation_detected": boolean, "message": "audit feedback"}}'
+            )
 
         raw = ai_service.generate(
             model=VISION_MODEL,
             prompt=prompt,
-            system="You are a strict production SOP compliance auditor. Return only valid JSON.",
+            system=system_prompt,
             format_json=True,
             temperature=0.0,
             images=[str(temp_frame_path)],
@@ -265,15 +377,24 @@ async def evaluate_camera_frame(sop_id: str, file: UploadFile = File(...)):
         )
         
         # Check if workflow regressed back to idle
-        workflow_regressed = session.workflow_initialized and detected_step == 0
-        
+        # IMPORTANT: Only reset after MULTIPLE frames of zero detection, not just one
+        # This prevents false resets from temporary detection loss (hand occlusion, lighting change)
+        workflow_regressed = (
+            session.workflow_initialized
+            and detected_step == 0
+            and session.consecutive_zero_detections >= session.ZERO_DETECTION_RESET_THRESHOLD
+        )
+
+        # Check inactivity alarm (5-second timeout before activity starts)
+        inactivity_alarm = session.update_inactivity_alarm()
+
         # Build response message
         if workflow_complete:
             message = "✓ WORKFLOW COMPLETE - All steps completed successfully and in correct sequence!"
             compliant = True
             deviation_detected = False
         elif workflow_regressed:
-            message = "Workflow paused/reset. Ready for next cycle - begin with Step 1."
+            message = "Workflow paused/reset after extended inactivity. Ready for next cycle - begin with Step 1."
             compliant = True
             deviation_detected = False
             # Reset session for new cycle
@@ -281,6 +402,13 @@ async def evaluate_camera_frame(sop_id: str, file: UploadFile = File(...)):
             session.current_step = 0
             session.completed_steps = []
             session.started_at = None
+            session.activity_started_at = None
+            session.consecutive_zero_detections = 0
+            logger.info(f"Session {session.session_id} reset after {session.consecutive_zero_detections} consecutive zero-detection frames")
+        elif inactivity_alarm and not session.workflow_initialized:
+            message = "⏳ No activity started (5 seconds elapsed). Please begin Step 1."
+            compliant = True
+            deviation_detected = False
         elif not session.workflow_initialized and detected_step == 0:
             message = "Waiting for operator to start workflow. Begin with Step 1."
             compliant = True
@@ -317,6 +445,7 @@ async def evaluate_camera_frame(sop_id: str, file: UploadFile = File(...)):
             violation_type=violation_type,
             expected_step=expected_step,
             workflow_started=session.workflow_initialized,
+            inactivity_alarm=inactivity_alarm,
         )
     except Exception as exc:
         logger.exception("Camera frame evaluation failed for SOP %s: %s", sop_id, exc)

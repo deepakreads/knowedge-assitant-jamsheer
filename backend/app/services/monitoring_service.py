@@ -2,6 +2,7 @@ import time
 import logging
 import base64
 import io
+import hashlib
 from typing import Dict, List, Optional
 from PIL import Image
 
@@ -27,6 +28,23 @@ class SOPMonitoringService:
         self.total_compliance = 0
         self.frames_analyzed = 0
         self.focus_major_steps = focus_major_steps
+
+        # Violation recovery tracking
+        self.step_violation_state: Dict[int, bool] = {}  # step_index -> has_been_violated (historical)
+        self.step_active_violation: Dict[int, bool] = {}  # step_index -> is_currently_violated (current)
+        self.step_compliance_history: Dict[int, List[float]] = {}  # step_index -> list of compliance scores
+        self.step_recovery_frames: int = 0  # Frames showing good compliance after violation
+
+        # Response caching for faster feedback (Level 2 optimization)
+        self.response_cache: Dict[int, Dict] = {}  # step_index -> cached response
+        self.response_cache_time: Dict[int, float] = {}  # step_index -> cache time
+        self.cache_ttl_ms: int = 300  # Cache TTL: 300ms for instant feedback on static scenes
+
+        # Frame similarity detection for smart filtering (Level 3 optimization)
+        self.last_frame_hash: Optional[str] = None  # Hash of previous frame
+        self.frame_skip_count: int = 0  # Count of skipped identical frames
+        self.frame_change_threshold: int = 2  # Skip after N identical frames
+        self.similarity_skip_enabled: bool = True  # Enable/disable frame similarity
 
         # Identify major steps on initialization
         self.major_step_indices = self._identify_major_steps() if focus_major_steps else None
@@ -76,14 +94,95 @@ class SOPMonitoringService:
                 # Recursively analyze next frame for the next step
                 return await self.analyze_frame(frame_base64)
 
+            # FRAME SIMILARITY CHECK: Skip analysis for identical frames (Level 3 optimization)
+            # Computes quick hash to detect motion without full analysis
+            if self.similarity_skip_enabled:
+                current_frame_hash = hashlib.md5(
+                    frame_base64.encode() if isinstance(frame_base64, str) else frame_base64
+                ).hexdigest()
+
+                if self.last_frame_hash == current_frame_hash:
+                    # Frame identical to last one - user not moving
+                    self.frame_skip_count += 1
+                    logger.debug(f"Frame identical (skip #{self.frame_skip_count}) - using cache if available")
+
+                    # If we've seen enough identical frames AND have cached result, skip analysis
+                    if self.frame_skip_count >= self.frame_change_threshold and \
+                       self.current_step in self.response_cache and \
+                       self.step_active_violation.get(self.current_step, False) is False:
+                        # Return cached result without re-analysis
+                        cached_result = self.response_cache[self.current_step]
+                        logger.debug(f"Skipped analysis for step {self.current_step + 1} (identical frame)")
+                        return cached_result
+                else:
+                    # Frame changed - reset skip counter AND clear cache (force fresh analysis)
+                    self.last_frame_hash = current_frame_hash
+                    self.frame_skip_count = 0
+
+                    # Clear Level 2 cache when frame content changes to force fresh analysis
+                    if self.current_step in self.response_cache:
+                        del self.response_cache[self.current_step]
+                    if self.current_step in self.response_cache_time:
+                        del self.response_cache_time[self.current_step]
+
+                    logger.debug(f"Frame changed - resetting skip counter and cache, new hash: {current_frame_hash[:8]}...")
+
+            # CHECK CACHE: Return cached result only if fresh, stable state, and NOT in recovery (Level 2 optimization)
+            # NOTE: Cache is only used for stable/compliant states (>= 80), NOT for violation recovery
+            # This ensures violations are always detected, but stable scenes get fast feedback
+            cache_key = self.current_step
+            current_time_ms = time.time() * 1000
+            was_violated = self.step_active_violation.get(self.current_step, False)
+
+            if cache_key in self.response_cache and cache_key in self.response_cache_time and not was_violated:
+                cached_compliance = self.response_cache[cache_key].get("compliance", 0)
+                # Only use cache if: (1) cache is fresh, (2) cached state was stable (no violation),
+                # AND (3) we're not currently recovering from a violation
+                if cached_compliance >= 80:
+                    cache_age_ms = current_time_ms - self.response_cache_time[cache_key]
+                    if cache_age_ms < self.cache_ttl_ms:
+                        # Cache hit for stable state - return immediately without vision API call
+                        logger.debug(f"Cache hit for step {self.current_step + 1} (age: {cache_age_ms:.0f}ms, compliance: {cached_compliance})")
+                        return self.response_cache[cache_key]
+
             # Analyze the frame using vision AI (for major steps only)
             compliance = await self._analyze_frame_with_vision(frame_base64, current_step)
+
+            # Track compliance history per step (for violation recovery)
+            if self.current_step not in self.step_compliance_history:
+                self.step_compliance_history[self.current_step] = []
+            self.step_compliance_history[self.current_step].append(compliance)
+
+            # VIOLATION RECOVERY: Check if a previously violated step is now correct
+            was_violated = self.step_active_violation.get(self.current_step, False)
+            is_now_compliant = compliance >= 80  # Task is compliant if score >= 80
+
+            if was_violated and is_now_compliant:
+                # Step has recovered from violation
+                self.step_recovery_frames += 1
+                if self.step_recovery_frames >= 2:  # Require 2 frames of good compliance
+                    # Clear the active violation
+                    self.step_active_violation[self.current_step] = False
+                    self.step_recovery_frames = 0
+                    logger.info(f"Step {self.current_step + 1} recovered from violation (compliance: {compliance}%)")
+            elif not is_now_compliant:
+                # Step is still violating
+                if self.current_step not in self.step_violation_state:
+                    self.step_violation_state[self.current_step] = True  # Mark historical violation
+                self.step_active_violation[self.current_step] = True
+                self.step_recovery_frames = 0
+            else:
+                # Compliance is good, reset recovery counter
+                if not was_violated:
+                    self.step_recovery_frames = 0
 
             # Generate feedback
             feedback = self._generate_feedback(compliance, current_step)
 
             # Check if step should auto-advance
-            step_complete = self._check_step_complete(current_step)
+            # Only advance if current step is NOT violated OR has recovered from violation
+            is_currently_violated = self.step_active_violation.get(self.current_step, False)
+            step_complete = self._check_step_complete(current_step) and not is_currently_violated
             if step_complete:
                 self._advance_step()
 
@@ -118,6 +217,20 @@ class SOPMonitoringService:
             if self.focus_major_steps:
                 result["is_major_step"] = is_major_step
                 result["major_steps_count"] = len(self.major_step_indices) if self.major_step_indices else 0
+
+            # STORE IN CACHE: Save result ONLY for stable states (>= 80 compliance) (Level 2 optimization)
+            # Violation states are NOT cached to ensure violations are always detected fresh
+            if compliance >= 80:
+                self.response_cache[cache_key] = result
+                self.response_cache_time[cache_key] = current_time_ms
+                logger.debug(f"Cached result for step {result['current_step']} (compliance: {compliance})")
+            else:
+                # Clear cache for violation states to ensure fresh analysis next time
+                if cache_key in self.response_cache:
+                    del self.response_cache[cache_key]
+                if cache_key in self.response_cache_time:
+                    del self.response_cache_time[cache_key]
+                logger.debug(f"Violation state not cached (compliance: {compliance})")
 
             logger.debug(f"Frame analysis complete - Step {result['current_step']}, Compliance: {compliance}%")
             return result
@@ -195,15 +308,32 @@ class SOPMonitoringService:
             self.step_start_time = time.time()
             next_step = self.sop["steps"][self.current_step].get("title", "Unknown")
             logger.info(f"Advanced from '{prev_step}' to '{next_step}' (Step {self.current_step + 1})")
+
+            # Clear cache for new step to ensure fresh analysis
+            if self.current_step in self.response_cache:
+                del self.response_cache[self.current_step]
+            if self.current_step in self.response_cache_time:
+                del self.response_cache_time[self.current_step]
+
+            # Reset frame similarity tracking for new step
+            self.last_frame_hash = None
+            self.frame_skip_count = 0
         else:
             logger.info("All steps completed!")
 
     def _get_warnings(self, compliance: float, step: dict) -> List[str]:
-        """Extract safety or procedural warnings"""
+        """Extract safety or procedural warnings - only for active violations, not historical"""
         warnings = []
 
-        if compliance < 40:
+        # Only show compliance warning if this is an ACTIVE violation, not a historical one
+        is_currently_violated = self.step_active_violation.get(self.current_step, False)
+        if compliance < 40 and is_currently_violated:
             warnings.append("⚠️ Low compliance - check procedure")
+        elif compliance < 40 and compliance >= 20:
+            warnings.append("⚡ Compliance recovering - continue...")
+        elif compliance < 20 and not is_currently_violated:
+            # This shouldn't happen, but handle edge case
+            pass
 
         if step.get("safety_notes"):
             warnings.append(f"🚨 {step['safety_notes']}")
@@ -238,38 +368,45 @@ class SOPMonitoringService:
         Analyze frame using vision AI and compare against SOP step.
 
         Returns compliance score 0-100.
+
+        Uses video-type-aware prompts to focus on task state (objects) rather than hand movements.
         """
         try:
-            from app.services import vision_service
+            from app.services import vision_service, video_type_prompts
 
-            # Create vision prompt for this step
-            tools_str = ", ".join(step.get("tools", [])) or "no specific tools"
-            prompt = f"""Analyze this manufacturing/industrial work image and answer:
+            # Determine video type from SOP metadata
+            video_type = self.sop.get("metadata", {}).get("video_type", "MACHINE_INSTRUCTIONS") if self.sop.get("metadata") else "MACHINE_INSTRUCTIONS"
 
-CURRENT SOP STEP: {step.get('title', 'Unknown')}
-INSTRUCTIONS: {step.get('description', '')}
-REQUIRED TOOLS: {tools_str}
-
-Please answer:
-1. What is the operator doing in this image?
-2. What tools are visible?
-3. Is the operator following the correct procedure for this step? (Yes/No/Partially)
-4. Are all required tools visible and being used correctly?
-5. Any safety concerns visible?
-6. Overall, how well is this step being performed? (Percentage 0-100%)
-
-Be very specific and base your assessment only on what you can see in the image."""
+            # Create video-type-specific prompt
+            if video_type == "DEMO_VIDEO":
+                # Task/Object-centric compliance for LEGO, simple assembly, etc.
+                required_materials_str = ", ".join(step.get("materials", [])) or "no specific materials"
+                prompt = video_type_prompts.DEMO_VIDEO_COMPLIANCE_PROMPT_TEMPLATE.format(
+                    step_title=step.get("title", "Unknown"),
+                    step_description=step.get("description", ""),
+                    required_objects=required_materials_str
+                )
+                analysis_type = "object_state"
+            else:
+                # Equipment/Process-centric compliance for industrial machinery
+                tools_str = ", ".join(step.get("tools", [])) or "no specific tools"
+                prompt = video_type_prompts.MACHINE_VIDEO_COMPLIANCE_PROMPT_TEMPLATE.format(
+                    step_title=step.get("title", "Unknown"),
+                    step_description=step.get("description", ""),
+                    required_tools=tools_str
+                )
+                analysis_type = "equipment_state"
 
             # Send frame to vision service
-            logger.info(f"Analyzing frame for step: {step.get('title', 'Unknown')}")
+            logger.info(f"Analyzing frame for step: {step.get('title', 'Unknown')} (video_type={video_type})")
             analysis = await vision_service.analyze_frame_with_prompt(
                 frame_base64,
                 prompt
             )
 
             # Parse the analysis to calculate compliance
-            compliance = self._parse_vision_analysis(analysis, step)
-            logger.info(f"Frame compliance: {compliance}%")
+            compliance = self._parse_vision_analysis(analysis, step, analysis_type)
+            logger.info(f"Frame compliance: {compliance}% (analysis_type={analysis_type})")
 
             return compliance
 
@@ -278,38 +415,106 @@ Be very specific and base your assessment only on what you can see in the image.
             # Fallback to time-based compliance if vision fails
             return self._calculate_compliance(step)
 
-    def _parse_vision_analysis(self, analysis: str, step: dict) -> float:
+    def _parse_vision_analysis(self, analysis: str, step: dict, analysis_type: str = "equipment_state") -> float:
         """
         Parse vision AI response and calculate compliance score.
 
-        Scoring:
-        - Following correct procedure: 50 points
-        - Tools visible and correct: 30 points
-        - No safety concerns: 20 points
+        DEBUG: Log all vision responses to diagnose detection issues.
+
+        Args:
+            analysis: Vision AI response (JSON string)
+            step: Current SOP step
+            analysis_type: Type of analysis ("object_state" for DEMO_VIDEO, "equipment_state" for MACHINE_VIDEO)
+
+        Scoring for DEMO_VIDEO (object_state):
+        - If task_compliant=True: Score based on individual checks
+        - If task_compliant=False: Cap score at 40 (violation detected)
+        - Objects present: 25 points
+        - Objects colors correct: 25 points
+        - Objects positioned correctly: 30 points
+        - Objects oriented correctly: 20 points
+
+        Scoring for MACHINE_VIDEO (equipment_state):
+        - If process_compliant=True: Full scoring available
+        - If process_compliant=False: Cap score at 45
+        - Equipment present: 20 points
+        - Equipment active: 25 points
+        - Parameters correct: 25 points
+        - Material state correct: 30 points
         """
+        try:
+            import json
+            parsed = json.loads(analysis) if isinstance(analysis, str) else analysis
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to text parsing if JSON parse fails
+            parsed = {}
+            logger.warning(f"Failed to parse vision analysis: {analysis}")
+
         score = 0
-        analysis_lower = analysis.lower()
 
-        # Check if following correct procedure (50 points)
-        if "yes" in analysis_lower and ("correct" in analysis_lower or "proper" in analysis_lower):
-            score += 50
-        elif "partially" in analysis_lower:
-            score += 25
+        if analysis_type == "object_state":
+            # DEMO_VIDEO: Focus on object state, NOT hand movements
+            # The vision response should have: required_objects_present, object_colors_correct,
+            # object_positioning_correct, object_orientation_correct, task_compliant
 
-        # Check for required tools (30 points)
-        required_tools = step.get("tools", [])
-        if required_tools:
-            tools_found = sum(1 for tool in required_tools if tool.lower() in analysis_lower)
-            if tools_found == len(required_tools):
+            objects_present = parsed.get("required_objects_present", False)
+            colors_correct = parsed.get("object_colors_correct", False)
+            positioning_correct = parsed.get("object_positioning_correct", False)
+            orientation_correct = parsed.get("object_orientation_correct", True)
+            task_compliant = parsed.get("task_compliant", False)
+
+            # DEBUG: Log each check
+            logger.debug(f"Vision analysis (DEMO_VIDEO):")
+            logger.debug(f"  objects_present: {objects_present}")
+            logger.debug(f"  colors_correct: {colors_correct}")
+            logger.debug(f"  positioning_correct: {positioning_correct}")
+            logger.debug(f"  orientation_correct: {orientation_correct}")
+            logger.debug(f"  task_compliant: {task_compliant}")
+
+            if objects_present:
+                score += 25
+            if colors_correct:
+                score += 25
+            if positioning_correct:
                 score += 30
-            elif tools_found > 0:
-                score += int(30 * (tools_found / len(required_tools)))
-        else:
-            score += 30  # No tools required
+            if orientation_correct:
+                score += 20
 
-        # Check for safety concerns (20 points)
-        if "unsafe" not in analysis_lower and "danger" not in analysis_lower and "safety" not in analysis_lower:
-            score += 20
+            # CRITICAL: If task is not compliant, cap score (violation detected)
+            if not task_compliant:
+                score = min(40, score)  # Cap at 40 for violation
+                logger.warning(f"Violation detected: task_compliant=False, score capped to {score}%")
+            else:
+                # Bonus if task compliant: up to 100
+                score = min(100, score + 10)
+                logger.debug(f"Task compliant, score: {score}%")
+
+            # The key insight: IGNORE ignored_hand_movements field
+            # If hand movements were ignored but objects are correct, that's SUCCESS
+            if parsed.get("ignored_hand_movements", False) and score >= 80:
+                score = min(100, score + 5)  # Slight bonus for correct evaluation
+
+        else:
+            # MACHINE_VIDEO: Focus on equipment/process state
+            # The vision response should have: equipment_present, equipment_active,
+            # parameters_correct, material_state_correct, process_compliant
+
+            if parsed.get("equipment_present", False):
+                score += 20
+            if parsed.get("equipment_active", False):
+                score += 25
+            if parsed.get("parameters_correct", False):
+                score += 25
+            if parsed.get("material_state_correct", False):
+                score += 30
+
+            # CRITICAL: If process not compliant, cap score (violation detected)
+            process_compliant = parsed.get("process_compliant", False)
+            if not process_compliant:
+                score = min(45, score)  # Cap at 45 for violation
+            else:
+                # Bonus if process compliant: up to 100
+                score = min(100, score + 10)
 
         return min(100, max(0, score))
 

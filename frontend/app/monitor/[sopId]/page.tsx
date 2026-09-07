@@ -285,7 +285,7 @@ export default function CameraMonitorPage() {
             isExecuting = false;
           }
         }, "image/jpeg", 0.85);
-      }, 2500); // Faster polling for better step transition detection
+      }, 500); // Optimized: 2 FPS for responsive monitoring with caching
     }
 
     return () => clearInterval(interval);

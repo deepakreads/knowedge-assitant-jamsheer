@@ -114,28 +114,60 @@ def generate_sop(
 
     if parsed:
         raw_steps = parsed.get("steps") or []
-        for i, entry in enumerate(timeline):
-            raw_step = raw_steps[i] if i < len(raw_steps) and isinstance(raw_steps[i], dict) else {}
 
-            raw_tools = raw_step.get("tools") if raw_step.get("tools") is not None else entry.tools
-            raw_mats = raw_step.get("materials") if raw_step.get("materials") is not None else entry.materials
-            raw_safety = raw_step.get("safety_notes") or []
+        # DEMO_VIDEO: Trust the AI to generate the right number of consolidated steps
+        # MACHINE_INSTRUCTIONS: Map each timeline entry to a step (one-to-one)
+        if video_type == "DEMO_VIDEO":
+            # For DEMO_VIDEO, use the consolidated steps from AI
+            # Don't force one-to-one timeline-to-step mapping
+            for i, raw_step in enumerate(raw_steps):
+                if not isinstance(raw_step, dict):
+                    continue
 
-            steps.append(
-                SopStep(
-                    step_number=i + 1,
-                    title=str(raw_step.get("title") or entry.activity or NOT_SPECIFIED),
-                    description=str(raw_step.get("description") or entry.activity or NOT_SPECIFIED),
-                    start_time=entry.start_time,
-                    end_time=entry.end_time,
-                    tools=[str(t) for t in (raw_tools or []) if str(t).strip()],
-                    materials=[str(m) for m in (raw_mats or []) if str(m).strip()],
-                    safety_notes=[str(s) for s in (raw_safety or []) if str(s).strip()],
-                    quality_check=raw_step.get("quality_check") or None,
-                    visual_reference=Path(entry.frame_reference).name if entry.frame_reference else None,
-                    confidence=entry.confidence,
+                raw_tools = raw_step.get("tools") or []
+                raw_mats = raw_step.get("materials") or []
+                raw_safety = raw_step.get("safety_notes") or []
+
+                steps.append(
+                    SopStep(
+                        step_number=i + 1,
+                        title=str(raw_step.get("title") or "Step"),
+                        description=str(raw_step.get("description") or NOT_SPECIFIED),
+                        start_time=raw_step.get("start_time", 0.0) if isinstance(raw_step.get("start_time"), (int, float)) else 0.0,
+                        end_time=raw_step.get("end_time", 0.0) if isinstance(raw_step.get("end_time"), (int, float)) else 0.0,
+                        tools=[str(t) for t in (raw_tools or []) if str(t).strip()],
+                        materials=[str(m) for m in (raw_mats or []) if str(m).strip()],
+                        safety_notes=[str(s) for s in (raw_safety or []) if str(s).strip()],
+                        quality_check=raw_step.get("quality_check") or None,
+                        visual_reference=None,  # Not applicable for consolidated AI steps
+                        confidence=0.95,  # High confidence for AI-generated steps
+                    )
                 )
-            )
+            logger.info(f"Generated {len(steps)} consolidated task steps for DEMO_VIDEO (from {len(timeline)} timeline activities)")
+        else:
+            # For MACHINE_INSTRUCTIONS: One step per timeline entry
+            for i, entry in enumerate(timeline):
+                raw_step = raw_steps[i] if i < len(raw_steps) and isinstance(raw_steps[i], dict) else {}
+
+                raw_tools = raw_step.get("tools") if raw_step.get("tools") is not None else entry.tools
+                raw_mats = raw_step.get("materials") if raw_step.get("materials") is not None else entry.materials
+                raw_safety = raw_step.get("safety_notes") or []
+
+                steps.append(
+                    SopStep(
+                        step_number=i + 1,
+                        title=str(raw_step.get("title") or entry.activity or NOT_SPECIFIED),
+                        description=str(raw_step.get("description") or entry.activity or NOT_SPECIFIED),
+                        start_time=entry.start_time,
+                        end_time=entry.end_time,
+                        tools=[str(t) for t in (raw_tools or []) if str(t).strip()],
+                        materials=[str(m) for m in (raw_mats or []) if str(m).strip()],
+                        safety_notes=[str(s) for s in (raw_safety or []) if str(s).strip()],
+                        quality_check=raw_step.get("quality_check") or None,
+                        visual_reference=Path(entry.frame_reference).name if entry.frame_reference else None,
+                        confidence=entry.confidence,
+                    )
+                )
         title = str(parsed.get("title") or title_hint or clean_filename_title)
         purpose = str(parsed.get("purpose") or NOT_SPECIFIED)
         scope = str(parsed.get("scope") or NOT_SPECIFIED)
