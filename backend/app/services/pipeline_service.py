@@ -10,6 +10,7 @@ from app.services import (
     ocr_service,
     sop_service,
     transcription_service,
+    validation_service,
     video_service,
     vision_service,
     video_type_analyzer,
@@ -45,8 +46,36 @@ def run_pipeline(job_id: str) -> None:
 def _run(job: Job) -> None:
     job_id = job.job_id
 
-    # --- Stage 1: Extracting Frames ---
-    logger.info("[Stage 1/6] Extracting frames for job %s...", job_id)
+    # --- Stage 1: Validating Video ---
+    logger.info("[Stage 1/7] Validating video file for job %s...", job_id)
+    job_store.update_stage(job_id, JobStage.VALIDATING)
+
+    validation_result = validation_service.validate_video(job.video_path)
+    logger.info("Video validation result: %s", validation_result.status.value)
+
+    for issue in validation_result.issues:
+        logger.info("  - %s", issue)
+
+    # Store validation details in job metadata
+    job = job_store.load_job(job_id)
+    if job.metadata is None:
+        job.metadata = {}
+    job.metadata["validation_result"] = validation_result.to_dict()
+    job_store.save_job(job)
+
+    # ERROR status means validation failed - cannot process
+    if validation_result.status == validation_service.ValidationStatus.ERROR:
+        error_msg = "Video validation failed: " + "; ".join(validation_result.issues)
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    # WARNING status means issues but can continue
+    if validation_result.status == validation_service.ValidationStatus.WARNING:
+        logger.warning("Video has quality warnings but will proceed: %s",
+                      "; ".join(validation_result.issues))
+
+    # --- Stage 2: Extracting Frames ---
+    logger.info("[Stage 2/7] Extracting frames for job %s...", job_id)
     job_store.update_stage(job_id, JobStage.EXTRACTING_FRAMES)
     frames, metadata = video_service.extract_frames(job.video_path, job_id)
     
@@ -55,8 +84,8 @@ def _run(job: Job) -> None:
     job_store.save_job(job)
     logger.info("Job %s: extracted %d sampled frames.", job_id, len(frames))
 
-    # --- Stage 2: Analyzing Frames (Vision) ---
-    logger.info("[Stage 2/6] Analyzing frames visually with %s...", VISION_MODEL)
+    # --- Stage 3: Analyzing Frames (Vision) ---
+    logger.info("[Stage 3/7] Analyzing frames visually with %s...", VISION_MODEL)
     job_store.update_stage(job_id, JobStage.ANALYZING_FRAMES)
     vision_observations = vision_service.analyze_frames(frames)
 
@@ -70,8 +99,8 @@ def _run(job: Job) -> None:
     job_store.save_job(job)
     logger.info("Job %s: visual analysis complete (%d observations).", job_id, len(vision_observations))
 
-    # --- Stage 2.5: Video Type Classification (NEW) ---
-    logger.info("[Stage 2.5/7] Classifying video type...")
+    # --- Stage 3.5: Video Type Classification (NEW) ---
+    logger.info("[Stage 3.5/7] Classifying video type...")
     video_type_info = video_type_analyzer.VideoTypeAnalyzer.analyze_video_type(vision_observations)
 
     logger.info(
@@ -91,8 +120,8 @@ def _run(job: Job) -> None:
     job.metadata["video_type_indicators"] = video_type_info["key_indicators"]
     job_store.save_job(job)
 
-    # --- Stage 4: Transcribing Audio (Non-fatal) ---
-    logger.info("[Stage 4/7] Extracting and transcribing audio...")
+    # --- Stage 5: Transcribing Audio (Non-fatal) ---
+    logger.info("[Stage 5/7] Extracting and transcribing audio...")
     job_store.update_stage(job_id, JobStage.TRANSCRIBING)
     transcript = []
     try:
@@ -105,8 +134,8 @@ def _run(job: Job) -> None:
     job.transcript = transcript
     job_store.save_job(job)
 
-    # --- Stage 5: OCR (Non-fatal) ---
-    logger.info("[Stage 5/7] Running OCR on sampled frames...")
+    # --- Stage 6: OCR (Non-fatal) ---
+    logger.info("[Stage 6/7] Running OCR on sampled frames...")
     job_store.update_stage(job_id, JobStage.OCR)
     ocr_results = []
     try:
@@ -118,8 +147,8 @@ def _run(job: Job) -> None:
     job.ocr_results = ocr_results
     job_store.save_job(job)
 
-    # --- Stage 6: Building Activity Timeline (with video type-specific prompts) ---
-    logger.info("[Stage 6/7] Building activity timeline with %s (video type: %s)...", SOP_MODEL, video_type_info["type"])
+    # --- Stage 7: Building Activity Timeline (with video type-specific prompts) ---
+    logger.info("[Stage 7/7] Building activity timeline with %s (video type: %s)...", SOP_MODEL, video_type_info["type"])
     job_store.update_stage(job_id, JobStage.BUILDING_TIMELINE)
     timeline = activity_service.build_activity_timeline(
         vision_observations,
@@ -136,8 +165,8 @@ def _run(job: Job) -> None:
     job_store.save_job(job)
     logger.info("Job %s: built activity timeline with %d activities.", job_id, len(timeline))
 
-    # --- Stage 7: Generating SOP (with video type-specific prompts) ---
-    logger.info("[Stage 7/7] Generating final SOP with %s (video type: %s)...", SOP_MODEL, video_type_info["type"])
+    # --- Stage 8: Generating SOP (with video type-specific prompts) ---
+    logger.info("[Stage 8/8] Generating final SOP with %s (video type: %s)...", SOP_MODEL, video_type_info["type"])
     job_store.update_stage(job_id, JobStage.GENERATING_SOP)
     sop = sop_service.generate_sop(
         job_id=job_id,

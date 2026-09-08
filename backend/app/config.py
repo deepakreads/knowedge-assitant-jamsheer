@@ -52,6 +52,16 @@ AICREDITS_MAX_RETRIES = int(os.getenv("AICREDITS_MAX_RETRIES", "2"))
 # EasyOCR is compatible with security policies that block executable downloads
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ("true", "1", "yes")
 
+# Video Validation Configuration
+VIDEO_VALIDATION_MIN_FPS = float(os.getenv("VIDEO_VALIDATION_MIN_FPS", "10.0"))  # Minimum FPS required
+VIDEO_VALIDATION_MIN_DURATION_SEC = float(os.getenv("VIDEO_VALIDATION_MIN_DURATION_SEC", "2.0"))
+VIDEO_VALIDATION_MAX_DURATION_SEC = float(os.getenv("VIDEO_VALIDATION_MAX_DURATION_SEC", "300.0"))  # 5 minutes
+VIDEO_VALIDATION_MIN_BRIGHTNESS = float(os.getenv("VIDEO_VALIDATION_MIN_BRIGHTNESS", "30.0"))  # Underexposure threshold
+VIDEO_VALIDATION_MAX_BRIGHTNESS = float(os.getenv("VIDEO_VALIDATION_MAX_BRIGHTNESS", "220.0"))  # Overexposure threshold
+VIDEO_VALIDATION_SHARPNESS_THRESHOLD = float(os.getenv("VIDEO_VALIDATION_SHARPNESS_THRESHOLD", "100.0"))  # Laplacian variance
+VIDEO_VALIDATION_BLUR_WARNING_FRAMES = int(os.getenv("VIDEO_VALIDATION_BLUR_WARNING_FRAMES", "2"))  # Warn if 2+ frames are blurry
+VIDEO_VALIDATION_MOTION_THRESHOLD = float(os.getenv("VIDEO_VALIDATION_MOTION_THRESHOLD", "0.15"))  # 15% frame diff = unstable
+VIDEO_VALIDATION_SAMPLE_FRAMES = int(os.getenv("VIDEO_VALIDATION_SAMPLE_FRAMES", "5"))  # Sample at begin, 25%, 50%, 75%, end
 
 # --- Elasticsearch Configuration ---
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")

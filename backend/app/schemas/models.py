@@ -19,6 +19,7 @@ def now_iso() -> str:
 
 class JobStage(str, Enum):
     UPLOADING = "uploading"
+    VALIDATING = "validating"
     EXTRACTING_FRAMES = "extracting_frames"
     ANALYZING_FRAMES = "analyzing_frames"
     TRANSCRIBING = "transcribing"
@@ -37,6 +38,7 @@ class JobStatus(str, Enum):
 
 STAGE_PROGRESS = {
     JobStage.UPLOADING: 10,
+    JobStage.VALIDATING: 15,
     JobStage.EXTRACTING_FRAMES: 25,
     JobStage.ANALYZING_FRAMES: 40,
     JobStage.TRANSCRIBING: 55,
